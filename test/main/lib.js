@@ -67,7 +67,8 @@ describe('the library', function () {
           follow: function () {
             return feed
           }
-        }
+        },
+        feed: feed
       })
     })
     it('throws an error when the database is missing', function () {

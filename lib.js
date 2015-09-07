@@ -1,5 +1,6 @@
 var assert = require('assert')
 var Nano = require('nano')
+var follow = require('follow')
 var _ = require('lodash')
 var request = require('request')
 var raven = require('raven')
@@ -41,17 +42,18 @@ function withOptions (options, mocks) {
     log.error(JSON.stringify(options.extra))
     client.captureMessage.apply(client, arguments)
   }
-  function listenChanges (options) {
+  function listenChanges (additionalOptions) {
     // the options used identify this change emitter
-    var ident = JSON.stringify(options)
+    var ident = JSON.stringify(additionalOptions)
     log.debug('listening for changes with options ' + ident)
     // some options are always used, i omitted them from `ident` in
     // order to make logs easier to follow
-    var complete = _.defaults(options, {
+    var complete = _.defaults(additionalOptions, {
       include_docs: true,
-      since: 'now'
+      since: 'now',
+      db: options.database
     })
-    var feed = db.follow(complete)
+    var feed = mocks.feed || new follow.Feed(complete)
     feed
       .on('change', function () {
         log.debug('change detected')
@@ -61,12 +63,17 @@ function withOptions (options, mocks) {
         var text = 'change with options ' + ident + ' found an error'
         captureMessage(text, { extra: err })
       })
+      .on('retry', function (info) {
+        log.debug('feed ' + ident +
+                  ' will retry since ' + info.since +
+                  ', after ' + info.after/1000 + ' seconds')
+      })
       .on('stop', function (err) {
         var text = 'a changes feed terminated'
         captureMessage(text, { extra: err })
       })
 
-    var events = ['confirm', 'catchup', 'wait', 'timeout', 'retry']
+    var events = ['confirm', 'catchup', 'wait', 'timeout']
     events.forEach(function (event) {
       feed.on(event, function () {
         log.debug('feed ' + ident + ' got ' + event + ' event')
