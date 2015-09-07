@@ -1,10 +1,10 @@
-describe('the second library', function () {
+describe('the library', function () {
   var lib = require('../../lib')
   it('exports a main module object', function () {
     lib.should.exist
   })
   it('builds a withOptions object', function () {
-    lib.withOptions({ database: 'test' }).should.exist
+    lib.withOptions({ database: 'http://test' }).should.exist
   })
   describe('dispatch', function () {
     it('dispatches', function () {
@@ -54,14 +54,26 @@ describe('the second library', function () {
   describe('withOptions', function () {
     var withOptions
     beforeEach(function () {
+      var feed = {
+        on: function () {
+          return feed
+        },
+        follow: function () {}
+      }
       withOptions = lib.withOptions({
-        database: 'test'
+        database: 'http://test'
+      }, {
+        db: {
+          follow: function () {
+            return feed
+          }
+        }
       })
     })
     it('throws an error when the database is missing', function () {
       assert.throws(function () {
         lib.withOptions({})
-      }, 'Pouch requires a database name')
+      }, 'Nano requires a database name')
     })
     it('returns an event emitter for database changes', function () {
       withOptions.getChanges().on.should.exist

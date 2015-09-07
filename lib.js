@@ -1,5 +1,5 @@
 var assert = require('assert')
-var PouchDB = require('pouchdb')
+var Nano = require('nano')
 var _ = require('lodash')
 var request = require('request')
 var raven = require('raven')
@@ -20,9 +20,12 @@ function addTime () {
 }
 addTime()
 
-function withOptions (options) {
-  assert(options.database, 'Pouch requires a database name')
-  var db = new PouchDB(options.database)
+function withOptions (options, mocks) {
+  assert(options.database, 'Nano requires a database name')
+  if (!mocks) {
+    mocks = {}
+  }
+  var db = mocks.db || new Nano(options.database)
   var configurationId = 'sense-dispatch-configuration'
   var client = new raven.Client(sentryEndpoint)
 
@@ -45,12 +48,11 @@ function withOptions (options) {
     // some options are always used, i omitted them from `ident` in
     // order to make logs easier to follow
     var complete = _.defaults(options, {
-      live: true,
       include_docs: true,
       since: 'now'
     })
-    var changes = db.changes(complete)
-    changes
+    var feed = db.follow(complete)
+    feed
       .on('change', function () {
         log.debug('change detected')
         log.debug(arguments)
@@ -59,29 +61,38 @@ function withOptions (options) {
         var text = 'change with options ' + ident + ' found an error'
         captureMessage(text, { extra: err })
       })
-      .on('complete', function (err) {
+      .on('stop', function (err) {
         var text = 'a changes feed terminated'
         captureMessage(text, { extra: err })
       })
-    return changes
+
+    var events = ['confirm', 'catchup', 'wait', 'timeout', 'retry']
+    events.forEach(function (event) {
+      feed.on(event, function () {
+        log.debug('feed ' + ident + ' got ' + event + ' event')
+      })
+    })
+    feed.follow()
+    return feed
   }
   function inline (obj) {
     var path = obj.configurationDocument.inlinePath
     if (path) {
+      var deferred = Q.defer()
       var id = _.get(obj.change, path)
-      return db
-        .get(id)
-        .then(function (document) {
-          _.set(obj.change, path, document)
-          return obj
-        })
-        .catch(function (error) {
-          captureMessage('error inlining document ' + id, { extra: error })
+      db.get(id, function (err, body) {
+        if (err) {
+          captureMessage('error inlining document ' + id, { extra: err })
           // returning the object without inlining seems the most
           // reasonable thing we can do here. anyway this will likely
           // lead to an error with templating
-          return obj
-        })
+          deferred.resolve(obj)
+        } else {
+          _.set(obj.change, path, body)
+          deferred.resolve(obj)
+        }
+      })
+      return deferred.promise
     } else {
       return Q(obj)
     }
@@ -95,11 +106,22 @@ function withOptions (options) {
   return {
     configurationDocument: {
       getInitial: function () {
-        return db.get(configurationId)
+        var deferred = Q.defer()
+        db.get(configurationId, function (err, body) {
+          if (err) {
+            deferred.reject(err)
+          } else {
+            deferred.resolve(body)
+          }
+        })
+        return deferred.promise
       },
       getChanges: function () {
         return listenChanges({
-          doc_ids: [configurationId]
+          filter: '_doc_ids',
+          query_params: {
+            doc_ids: JSON.stringify([configurationId])
+          }
         })
       }
     },
@@ -108,7 +130,9 @@ function withOptions (options) {
     getChanges: function () {
       return listenChanges({
         filter: '_view',
-        view: 'dashboard/symptomatic-followups-by-dateofvisit'
+        query_params: {
+          view: 'dashboard/symptomatic-followups-by-dateofvisit'
+        }
       })
     },
     inline: inline,

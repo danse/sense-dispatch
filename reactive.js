@@ -16,7 +16,7 @@ function changesToStream (changes, lib) {
       .on('error', function () {
         sink(new Bacon.End())
       })
-      .on('complete', function () {
+      .on('stop', function () {
         sink(new Bacon.End())
       })
   })
